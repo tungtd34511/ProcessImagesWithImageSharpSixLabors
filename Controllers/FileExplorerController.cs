@@ -1,15 +1,35 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using ProcessImagesWithImageSharpSixLabors.Models;
+using ProcessImagesWithImageSharpSixLabors.Services;
+
+// For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
 
 namespace ProcessImagesWithImageSharpSixLabors.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
+    [ApiController]
     public class FileExplorerController : ControllerBase
     {
-        [HttpGet("index")]
-        public IActionResult Index()
+        private readonly IFileExplorerService _fileExplorerService;
+
+        public FileExplorerController(IFileExplorerService fileExplorerService)
         {
-            return Ok();
+            _fileExplorerService = fileExplorerService;
+        }
+
+        // GET: api/<FileExplorerController>
+        [HttpPost("upload")]
+        public async Task<IActionResult> Upload([FromForm] UploadFileDTO obj)
+        {
+            try
+            {
+                string path = await _fileExplorerService.SaveAsync(obj.File);
+                return Ok(path);
+            }
+            catch (Exception e)
+            {
+                return BadRequest(e);
+            }
         }
     }
 }
