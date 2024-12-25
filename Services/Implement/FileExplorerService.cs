@@ -118,7 +118,7 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
                     {
                         image.Mutate(c => c.Resize(new ResizeOptions()
                         {
-                            Size = new Size(image.Width, image.Height),
+                            Size = new Size(option.Width, option.Height),
                             Mode = option.MaintainAspectRatio ? ResizeMode.Manual : option.FitMethod,
                             Sampler = option.Method,
                             PremultiplyAlpha = option.PremultiplyAlpha

@@ -40,7 +40,6 @@ namespace ProcessImagesWithImageSharpSixLabors.Models
         #region Advanced
         public JpegEncodingColor EncodingColor { get; set; } = JpegEncodingColor.YCbCrRatio420;
         public int Smooth { get; set; } = 0;
-        public int Quantization { get; set; }
         #endregion
     }
     public enum FitMethodOption
