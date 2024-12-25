@@ -1,7 +1,21 @@
 ﻿using ProcessImagesWithImageSharpSixLabors.Models;
+using ProcessImagesWithImageSharpSixLabors.Util.Extensions;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Advanced;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Formats.Bmp;
+using SixLabors.ImageSharp.Formats.Gif;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Formats.Pbm;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.Formats.Qoi;
+using SixLabors.ImageSharp.Formats.Tga;
+using SixLabors.ImageSharp.Formats.Tiff;
+using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Processing.Processors.Quantization;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
@@ -23,8 +37,8 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
 
         private readonly IWebHostEnvironment _environment;
         private readonly IConfiguration _configuration;
-        public string _defaultUploadPathFullName => Path.Combine( _environment.WebRootPath, _defaultUploadPathName );
-        private readonly string[] _permittedExtensions = { ".txt", ".pdf",".jpg",".jpeg" };
+        public string _defaultUploadPathFullName => Path.Combine(_environment.WebRootPath, _defaultUploadPathName);
+        private readonly string[] _permittedExtensions = { ".txt", ".pdf", ".jpg", ".jpeg",".png" };
         private static List<byte[]> _imageSignature = new List<byte[]>
         {
             new byte[] { 0xFF, 0xD8, 0xFF },                // JPEG
@@ -41,6 +55,13 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
             {
                 FileType.Image, _imageSignature
             },
+        };
+        private static JpegEncodingColor[] _yCbCrEncodingColors = new JpegEncodingColor[] {
+            JpegEncodingColor.YCbCrRatio420,
+            JpegEncodingColor.YCbCrRatio444,
+            JpegEncodingColor.YCbCrRatio422,
+            JpegEncodingColor.YCbCrRatio411,
+            JpegEncodingColor.YCbCrRatio410
         };
         public FileExplorerService(IWebHostEnvironment environment, IConfiguration configuration)
         {
@@ -62,7 +83,7 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
             }
             if (IsImageBySignature(file))
             {
-                return await SaveImageAsync(file);
+                return await SaveImageAsync(file, new UploadFileOption());
             }
             string newFileName = GetRandomFileName(ext);
             string newFileFullName = Path.Combine(_defaultUploadPathFullName, newFileName);
@@ -82,6 +103,12 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
         {
             string newFileName = GetRandomFileName(Path.GetExtension(file.FileName));
             string newFileFullName = Path.Combine(_defaultUploadPathFullName, newFileName);
+            // Nén ảnh về JPEG trước khi chuyển đổi
+            IImageEncoder encoder = new JpegEncoder();
+            if (!Directory.Exists(_defaultUploadPathFullName))
+            {
+                Directory.CreateDirectory(_defaultUploadPathFullName);
+            }
             using (Image<Rgba32> image = await Image.LoadAsync<Rgba32>(file.OpenReadStream()))
             {
                 if (option != null)
@@ -89,64 +116,48 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
                     //Resize
                     if (option.IsResize)
                     {
-                        //If you pass 0 as any of the values for width and height dimensions then ImageSharp will automatically determine the correct opposite dimensions size to preserve the original aspect ratio.
-                        image.Mutate(c => c.Resize(option.Width, option.Height, option.Method));
-                        if (option.PremultiplyAlphaChannel || option.LinearRGB)
+                        image.Mutate(c => c.Resize(new ResizeOptions()
                         {
-                            // Iterate through each pixel
-                            image.ProcessPixelRows(accessor =>
-                            {
-                                for (int y = 0; y < accessor.Height; y++)
-                                {
-                                    Span<Rgba32> pixelRow = accessor.GetRowSpan(y);
-                                    for (int x = 0; x < pixelRow.Length; x++)
-                                    {
-
-                                        ref Rgba32 pixel = ref pixelRow[x];
-                                        if (option.PremultiplyAlphaChannel)
-                                        {
-
-                                            // Normalize alpha to range [0, 1]
-                                            float alpha = pixel.A / 255f;
-
-                                            // Premultiply color channels
-                                            pixel.R = (byte)(pixel.R * alpha);
-                                            pixel.G = (byte)(pixel.G * alpha);
-                                            pixel.B = (byte)(pixel.B * alpha);
-                                        }
-
-                                        if (option.LinearRGB)
-                                        {
-                                            // Convert sRGB to Linear RGB
-                                            float linearR = sRgbToLinear(pixel.R);
-                                            float linearG = sRgbToLinear(pixel.G);
-                                            float linearB = sRgbToLinear(pixel.B);
-
-                                            // Perform Linear RGB processing (e.g., brighten by 10%)
-                                            linearR = Math.Clamp(linearR * 1.1f, 0.0f, 1.0f);
-                                            linearG = Math.Clamp(linearG * 1.1f, 0.0f, 1.0f);
-                                            linearB = Math.Clamp(linearB * 1.1f, 0.0f, 1.0f);
-
-                                            // Convert Linear RGB back to sRGB
-                                            pixel.R = linearToSRgb(linearR);
-                                            pixel.G = linearToSRgb(linearG);
-                                            pixel.B = linearToSRgb(linearB);
-                                        }
-                                    }
-                                }
-                            });
+                            Size = new Size(image.Width, image.Height),
+                            Mode = option.MaintainAspectRatio ? ResizeMode.Manual : option.FitMethod,
+                            Sampler = option.Method,
+                            PremultiplyAlpha = option.PremultiplyAlpha
+                        }));
+                        if (option.LinearRGB)
+                        {
+                            image.ProgressLinearRGB();
                         }
                     }
+                    #region Advanced
+                    using (MemoryStream jpegStream = new MemoryStream())
+                    {
+                        encoder = new JpegEncoder()
+                        {
+                            Quality = option.Quality,
+                            ColorType = option.EncodingColor
+                        };
+                        if(option.Smooth > 0)
+                        {
+                            image.Mutate(c=>c.GaussianBlur(option.Smooth));
+                        }
+                        // Lưu ảnh vào jpegStream dưới dạng JPEG
+                        await image.SaveAsync(jpegStream, encoder);
+                        // Đặt lại vị trí của stream về đầu sau khi lưu ảnh
+                        jpegStream.Position = 0;
+                        // Nếu CompressType không phải Original, chọn encoder cho định dạng đích
+                        encoder = option.CompressType != CompressType.Original ? GetEncoder(option.CompressType) : image.DetectEncoder(newFileFullName);
+                        // Đọc ảnh từ jpegStream và lưu lại với encoder đã chọn
+                        using (var finalImage = await Image.LoadAsync<Rgba32>(jpegStream))  // Đọc ảnh JPEG từ stream
+                        {
+                            await finalImage.SaveAsync(newFileFullName, encoder);  // Lưu ảnh vào file
+                        }
+                    }
+                    #endregion
                 }
-                await image.SaveAsync(newFileFullName);
-            }
-            using (var stream = new FileStream(newFileFullName, FileMode.Create))
-            {
-                if (!Directory.Exists(_defaultUploadPathFullName))
+                else
                 {
-                    Directory.CreateDirectory(_defaultUploadPathFullName);
+                    await image.SaveAsync(newFileFullName);
                 }
-                await file.CopyToAsync(stream);
             }
             string webPath = GetWebPath(newFileFullName);
             return webPath;
@@ -228,17 +239,31 @@ namespace ProcessImagesWithImageSharpSixLabors.Services.Implement
             string fileName = Path.GetFileNameWithoutExtension(Path.GetRandomFileName());
             return $"{DateTimeOffset.Now.ToUnixTimeSeconds()}_{fileName}{ext}";
         }
-        private float sRgbToLinear(byte sRgb)
+        private static IImageEncoder GetEncoder(CompressType type)
         {
-            float value = sRgb / 255f;
-            return (value <= 0.04045f) ? (value / 12.92f) : (float)Math.Pow((value + 0.055) / 1.055, 2.4);
-        }
-
-        private byte linearToSRgb(float linear)
-        {
-            return (linear <= 0.0031308f)
-                ? (byte)(linear * 12.92f * 255f)
-                : (byte)((1.055f * Math.Pow(linear, 1.0 / 2.4) - 0.055f) * 255f);
+            switch (type)
+            {
+                case CompressType.Bmp:
+                    return new BmpEncoder();
+                case CompressType.Gif:
+                    return new GifEncoder();
+                case CompressType.Jpeg:
+                    return new JpegEncoder();
+                case CompressType.Pbm:
+                    return new PbmEncoder();
+                case CompressType.Png:
+                    return new PngEncoder();
+                case CompressType.Qoi:
+                    return new QoiEncoder();
+                case CompressType.Tga:
+                    return new TgaEncoder();
+                case CompressType.Tiff:
+                    return new TiffEncoder();
+                case CompressType.WebP:
+                    return new WebpEncoder();
+                default:
+                    return new JpegEncoder();
+            }
         }
         #endregion
     }
